@@ -13,6 +13,9 @@ from utils import *
 
 from model import Generator, Discriminator
 
+from skimage.metrics import structural_similarity as ssim_func  # Rename to avoid conflict
+from skimage.transform import resize
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -39,10 +42,10 @@ def main():
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--mode', type=str, default='test', choices=['train', 'test'])
 
-    parser.add_argument('--celeba_image_dir', type=str, default='../img_align_celeba')
-    parser.add_argument('--attr_path', type=str, default='../list_attr_celeba.txt')
-    parser.add_argument('--model_save_dir', type=str, default='stargan_celeba_256/models')
-    parser.add_argument('--result_dir', type=str, default='results')
+    parser.add_argument('--celeba_image_dir', type=str, default='/home/kjh/dev/capstone/disrupting-deepfakes/stargan/data/celeba/images')
+    parser.add_argument('--attr_path', type=str, default='/home/kjh/dev/capstone/disrupting-deepfakes/stargan/data/celeba/list_attr_celeba.txt')
+    parser.add_argument('--model_save_dir', type=str, default='/home/kjh/dev/capstone/disrupting-deepfakes/stargan/stargan_celeba_256/models')
+    parser.add_argument('--result_dir', type=str, default='/home/kjh/dev/capstone/AntiForgery/results')
 
     config = parser.parse_args()
 
@@ -61,7 +64,6 @@ def main():
     print('Loading the trained models from step {}...'.format(config.resume_iters))
     G_path = os.path.join(config.model_save_dir, '{}-G.ckpt'.format(config.resume_iters))
     D_path = os.path.join(config.model_save_dir, '{}-D.ckpt'.format(config.resume_iters))
-    # self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
     load_model_weights(G, G_path)
     D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
     print("loading model successful")
@@ -91,12 +93,25 @@ def main():
                 gen, _ = G(x_adv, c_trg)
                 # Add to lists
                 x_fake_list.append(gen_noattack)
-                # x_fake_list.append(perturb)
                 x_fake_list.append(gen)
 
                 l2_error += F.mse_loss(gen, gen_noattack)
 
-                ssim_local, psnr_local = compare(denorm(gen), denorm(gen_noattack))
+                # Convert tensors to NumPy arrays
+                img1 = denorm(gen).cpu().numpy()
+                img2 = denorm(gen_noattack).cpu().numpy()
+
+                # Ensure minimum size
+                min_size = 7
+                if img1.shape[0] < min_size or img1.shape[1] < min_size:
+                    img1 = resize(img1, (min_size, min_size, img1.shape[2]), anti_aliasing=True)
+                    img2 = resize(img2, (min_size, min_size, img2.shape[2]), anti_aliasing=True)
+
+                # Compute SSIM and PSNR
+                ssim_local = ssim_func(img1, img2, data_range=1.0, channel_axis=-1)  # Use the renamed function
+                psnr_local = -10 * torch.log10(F.mse_loss(torch.tensor(img1), torch.tensor(img2), reduction='mean'))
+
+
                 ssim += ssim_local
                 psnr += psnr_local
 
@@ -117,6 +132,7 @@ def main():
                                                                      ssim / n_samples,
                                                                      psnr / n_samples,
                                                                     float(n_dist) / n_samples))
-
+    
+    
 if __name__ == '__main__':
     main()
